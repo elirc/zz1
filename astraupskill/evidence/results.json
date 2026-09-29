@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "executedTests": 4,
+  "checks": [
+    {
+      "project": "_Organized Desktop/05 Numbered Experiments/zz1",
+      "id": "5f8d9a364788",
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "--test",
+        "tests/deal-stage-update-result.test.mjs"
+      ],
+      "cwd": "C:\\Users\\Owner\\Desktop\\AstraOrganized2\\astra-remaining-improvements\\stage\\5f8d9a364788",
+      "environmentOverrides": {},
+      "startedAt": "2026-09-22T04:21:42.865773+00:00",
+      "status": "complete",
+      "log": "crud-b07-astra-runtime.log",
+      "pid": 17980,
+      "exitCode": 0,
+      "passed": true,
+      "finishedAt": "2026-09-22T04:21:56.416882+00:00",
+      "elapsedSeconds": 13.55
+    }
+  ],
+  "limits": [
+    "Repository, Prisma transaction, pipeline, and audit are explicit doubles.",
+    "No real provider or concurrency execution.",
+    "Guard proves non-null reread before dependent writes, not transactional race resolution."
+  ]
+}

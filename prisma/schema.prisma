@@ -1,0 +1,645 @@
+// Defines the shared-schema PostgreSQL model for the multi-tenant CRM.
+// Called by Prisma Client in src/lib/db/prisma.ts and all repository files.
+// Calls generated Prisma types used by services, route handlers, and tests.
+// A junior engineer often forgets that every tenant-owned model needs organizationId and reviewable indexes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlatformRole {
+  NONE
+  PLATFORM_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  TRIALING
+  SUSPENDED
+  ARCHIVED
+}
+
+enum OrganizationPlan {
+  FREE
+  GROWTH
+  ENTERPRISE
+}
+
+enum MembershipRole {
+  ORGANIZATION_ADMIN
+  SALES_MANAGER
+  SALES_REP
+  READ_ONLY
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum LeadStatus {
+  NEW
+  WORKING
+  QUALIFIED
+  UNQUALIFIED
+  CONVERTED
+  ARCHIVED
+}
+
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum LeadSource {
+  WEBSITE
+  REFERRAL
+  OUTBOUND
+  EVENT
+  PARTNER
+  IMPORT
+  OTHER
+}
+
+enum ContactStatus {
+  ACTIVE
+  NURTURING
+  CUSTOMER
+  INACTIVE
+  ARCHIVED
+}
+
+enum CompanyStatus {
+  ACTIVE
+  PROSPECT
+  CUSTOMER
+  CHURNED
+  ARCHIVED
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+  ARCHIVED
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  TASK
+  NOTE
+}
+
+enum ActivityStatus {
+  OPEN
+  COMPLETED
+  CANCELED
+}
+
+enum SavedViewResource {
+  LEAD
+  CONTACT
+  DEAL
+  ACTIVITY
+}
+
+enum SavedViewVisibility {
+  PERSONAL
+  ORGANIZATION
+}
+
+enum ExportJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ImportResource {
+  LEAD
+  CONTACT
+  COMPANY
+}
+
+enum ImportJobStatus {
+  RECEIVED
+  PARSING
+  APPLIED
+  FAILED
+}
+
+enum AsyncJobType {
+  INVITATION_NOTIFICATION
+  ASSIGNMENT_REMINDER
+  EXPORT_GENERATION
+  SCHEDULED_SUMMARY
+  FOLLOW_UP_REMINDER
+  CSV_IMPORT
+}
+
+enum AsyncJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+model Organization {
+  id                  String              @id @default(cuid())
+  name                String
+  slug                String              @unique
+  status              OrganizationStatus  @default(TRIALING)
+  plan                OrganizationPlan    @default(FREE)
+  website             String?
+  metadata            Json?
+  settings            Json?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  memberships         Membership[]
+  invitations         Invitation[]
+  pipelines           Pipeline[]
+  pipelineStages      PipelineStage[]
+  companies           Company[]
+  leads               Lead[]
+  contacts            Contact[]
+  deals               Deal[]
+  activities          Activity[]
+  savedViews          SavedView[]
+  exportJobs          ExportJob[]
+  importJobs          ImportJob[]
+  attachments         Attachment[]
+  auditLogs           AuditLog[]
+  assignmentHistories AssignmentHistory[]
+  asyncJobs           AsyncJob[]
+  leadStatusHistory   LeadStatusHistory[]
+  dealStageHistory    DealStageHistory[]
+}
+
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  firstName       String
+  lastName        String
+  platformRole    PlatformRole @default(NONE)
+  status          UserStatus   @default(ACTIVE)
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  memberships     Membership[]
+  invitationsSent Invitation[] @relation("InvitationInviter")
+  auditLogs       AuditLog[]   @relation("AuditActorUser")
+}
+
+model Membership {
+  id                String              @id @default(cuid())
+  organizationId    String
+  userId            String
+  role              MembershipRole
+  status            MembershipStatus    @default(ACTIVE)
+  title             String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownedCompanies    Company[]           @relation("CompanyOwner")
+  ownedLeads        Lead[]              @relation("LeadOwner")
+  createdLeads      Lead[]              @relation("LeadCreatedBy")
+  updatedLeads      Lead[]              @relation("LeadUpdatedBy")
+  ownedContacts     Contact[]           @relation("ContactOwner")
+  createdContacts   Contact[]           @relation("ContactCreatedBy")
+  ownedDeals        Deal[]              @relation("DealOwner")
+  createdDeals      Deal[]              @relation("DealCreatedBy")
+  ownedActivities   Activity[]          @relation("ActivityOwner")
+  createdActivities Activity[]          @relation("ActivityCreatedBy")
+  savedViews        SavedView[]         @relation("SavedViewOwner")
+  requestedExports  ExportJob[]         @relation("ExportRequestedBy")
+  createdImports    ImportJob[]         @relation("ImportCreatedBy")
+  uploadedFiles     Attachment[]        @relation("AttachmentUploadedBy")
+  sentAuditLogs     AuditLog[]          @relation("AuditActorMembership")
+  leadStatusChanges LeadStatusHistory[] @relation("LeadStatusChangedBy")
+  dealStageChanges  DealStageHistory[]  @relation("DealStageChangedBy")
+  assignmentChanges AssignmentHistory[] @relation("AssignmentChangedBy")
+  previousOwners    AssignmentHistory[] @relation("AssignmentFrom")
+  nextOwners        AssignmentHistory[] @relation("AssignmentTo")
+
+  @@unique([organizationId, userId])
+  @@index([organizationId, role, status])
+}
+
+model Invitation {
+  id              String           @id @default(cuid())
+  organizationId  String
+  email           String
+  role            MembershipRole
+  status          InvitationStatus @default(PENDING)
+  invitedByUserId String
+  token           String           @unique
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy       User             @relation("InvitationInviter", fields: [invitedByUserId], references: [id])
+
+  @@unique([organizationId, email, status])
+  @@index([organizationId, status])
+}
+
+model Pipeline {
+  id             String          @id @default(cuid())
+  organizationId String
+  name           String
+  key            String
+  isDefault      Boolean         @default(false)
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stages         PipelineStage[]
+  leads          Lead[]
+  deals          Deal[]
+
+  @@unique([organizationId, key])
+  @@index([organizationId, isDefault, active])
+}
+
+model PipelineStage {
+  id             String             @id @default(cuid())
+  organizationId String
+  pipelineId     String
+  name           String
+  key            String
+  position       Int
+  probability    Int                @default(0)
+  isClosed       Boolean            @default(false)
+  isWon          Boolean            @default(false)
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pipeline       Pipeline           @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  leads          Lead[]             @relation("LeadCurrentStage")
+  deals          Deal[]             @relation("DealCurrentStage")
+  enteredHistory DealStageHistory[] @relation("DealStageTo")
+  exitedHistory  DealStageHistory[] @relation("DealStageFrom")
+
+  @@unique([pipelineId, key])
+  @@unique([pipelineId, position])
+  @@index([organizationId, pipelineId, active])
+}
+
+model Company {
+  id                String        @id @default(cuid())
+  organizationId    String
+  name              String
+  domain            String?
+  ownerMembershipId String?
+  status            CompanyStatus @default(PROSPECT)
+  tags              Json?
+  metadata          Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner             Membership?   @relation("CompanyOwner", fields: [ownerMembershipId], references: [id])
+  leads             Lead[]
+  contacts          Contact[]
+  deals             Deal[]
+  activities        Activity[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+}
+
+model Lead {
+  id                    String              @id @default(cuid())
+  // ⚠️ SENIOR NOTE: This field exists on every tenant-owned model because shared-schema multi-tenancy only works if scoping is impossible to ignore.
+  organizationId        String
+  pipelineId            String?
+  stageId               String?
+  companyId             String?
+  ownerMembershipId     String?
+  createdByMembershipId String
+  updatedByMembershipId String
+  name                  String
+  email                 String?
+  phone                 String?
+  companyName           String?
+  source                LeadSource          @default(OTHER)
+  status                LeadStatus          @default(NEW)
+  priority              LeadPriority        @default(MEDIUM)
+  qualificationNotes    String?
+  nextFollowUpAt        DateTime?
+  archivedAt            DateTime?
+  tags                  Json?
+  metadata              Json?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  organization          Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pipeline              Pipeline?           @relation(fields: [pipelineId], references: [id])
+  stage                 PipelineStage?      @relation("LeadCurrentStage", fields: [stageId], references: [id])
+  company               Company?            @relation(fields: [companyId], references: [id])
+  owner                 Membership?         @relation("LeadOwner", fields: [ownerMembershipId], references: [id])
+  createdBy             Membership          @relation("LeadCreatedBy", fields: [createdByMembershipId], references: [id])
+  updatedBy             Membership          @relation("LeadUpdatedBy", fields: [updatedByMembershipId], references: [id])
+  convertedContact      Contact?            @relation("ContactSourceLead")
+  sourcedDeals          Deal[]              @relation("DealSourceLead")
+  activities            Activity[]
+  statusHistory         LeadStatusHistory[]
+
+  @@index([organizationId, status, ownerMembershipId])
+  @@index([organizationId, pipelineId, stageId])
+  @@index([organizationId, source, createdAt])
+}
+
+model Contact {
+  id                    String        @id @default(cuid())
+  organizationId        String
+  companyId             String?
+  ownerMembershipId     String?
+  createdByMembershipId String
+  sourceLeadId          String?       @unique
+  firstName             String
+  lastName              String
+  email                 String?
+  phone                 String?
+  title                 String?
+  status                ContactStatus @default(ACTIVE)
+  tags                  Json?
+  metadata              Json?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  organization          Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company               Company?      @relation(fields: [companyId], references: [id])
+  owner                 Membership?   @relation("ContactOwner", fields: [ownerMembershipId], references: [id])
+  createdBy             Membership    @relation("ContactCreatedBy", fields: [createdByMembershipId], references: [id])
+  sourceLead            Lead?         @relation("ContactSourceLead", fields: [sourceLeadId], references: [id])
+  activities            Activity[]
+  primaryDeals          Deal[]        @relation("DealPrimaryContact")
+
+  @@index([organizationId, status, ownerMembershipId])
+  @@index([organizationId, companyId])
+}
+
+model Deal {
+  id                    String             @id @default(cuid())
+  organizationId        String
+  pipelineId            String
+  stageId               String
+  companyId             String?
+  ownerMembershipId     String?
+  createdByMembershipId String
+  primaryContactId      String?
+  sourceLeadId          String?
+  title                 String
+  status                DealStatus         @default(OPEN)
+  value                 Decimal            @db.Decimal(12, 2)
+  currency              String             @default("USD")
+  expectedCloseDate     DateTime?
+  closedAt              DateTime?
+  lostReason            String?
+  nextStep              String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  organization          Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pipeline              Pipeline           @relation(fields: [pipelineId], references: [id])
+  stage                 PipelineStage      @relation("DealCurrentStage", fields: [stageId], references: [id])
+  company               Company?           @relation(fields: [companyId], references: [id])
+  owner                 Membership?        @relation("DealOwner", fields: [ownerMembershipId], references: [id])
+  createdBy             Membership         @relation("DealCreatedBy", fields: [createdByMembershipId], references: [id])
+  primaryContact        Contact?           @relation("DealPrimaryContact", fields: [primaryContactId], references: [id])
+  sourceLead            Lead?              @relation("DealSourceLead", fields: [sourceLeadId], references: [id])
+  activities            Activity[]
+  stageHistory          DealStageHistory[]
+
+  @@index([organizationId, status, ownerMembershipId])
+  @@index([organizationId, pipelineId, stageId])
+  @@index([organizationId, expectedCloseDate])
+}
+
+model Activity {
+  id                    String         @id @default(cuid())
+  organizationId        String
+  leadId                String?
+  contactId             String?
+  dealId                String?
+  companyId             String?
+  ownerMembershipId     String?
+  createdByMembershipId String
+  type                  ActivityType
+  status                ActivityStatus @default(OPEN)
+  subject               String
+  summary               String?
+  outcome               String?
+  nextAction            String?
+  dueAt                 DateTime?
+  completedAt           DateTime?
+  metadata              Json?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  organization          Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead                  Lead?          @relation(fields: [leadId], references: [id])
+  contact               Contact?       @relation(fields: [contactId], references: [id])
+  deal                  Deal?          @relation(fields: [dealId], references: [id])
+  company               Company?       @relation(fields: [companyId], references: [id])
+  owner                 Membership?    @relation("ActivityOwner", fields: [ownerMembershipId], references: [id])
+  createdBy             Membership     @relation("ActivityCreatedBy", fields: [createdByMembershipId], references: [id])
+  attachments           Attachment[]
+
+  @@index([organizationId, type, status])
+  @@index([organizationId, dueAt])
+}
+
+model SavedView {
+  id                String              @id @default(cuid())
+  organizationId    String
+  ownerMembershipId String
+  resource          SavedViewResource
+  visibility        SavedViewVisibility @default(PERSONAL)
+  name              String
+  filters           Json
+  sort              Json?
+  columns           Json?
+  isDefault         Boolean             @default(false)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner             Membership          @relation("SavedViewOwner", fields: [ownerMembershipId], references: [id])
+  exportJobs        ExportJob[]
+
+  @@unique([organizationId, ownerMembershipId, resource, name])
+  @@index([organizationId, resource, visibility])
+}
+
+model ExportJob {
+  id                      String            @id @default(cuid())
+  organizationId          String
+  requestedByMembershipId String
+  savedViewId             String?
+  resource                SavedViewResource
+  status                  ExportJobStatus   @default(QUEUED)
+  filtersSnapshot         Json?
+  fileName                String?
+  fileUrl                 String?
+  totalRows               Int?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  errorMessage            String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  organization            Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy             Membership        @relation("ExportRequestedBy", fields: [requestedByMembershipId], references: [id])
+  savedView               SavedView?        @relation(fields: [savedViewId], references: [id])
+  attachments             Attachment[]
+
+  @@index([organizationId, resource, status])
+  @@index([organizationId, createdAt])
+}
+
+model ImportJob {
+  id                    String          @id @default(cuid())
+  organizationId        String
+  createdByMembershipId String
+  resource              ImportResource
+  status                ImportJobStatus @default(RECEIVED)
+  fileName              String
+  summary               Json?
+  errorMessage          String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  organization          Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy             Membership      @relation("ImportCreatedBy", fields: [createdByMembershipId], references: [id])
+  attachments           Attachment[]
+
+  @@index([organizationId, resource, status])
+}
+
+model Attachment {
+  id                     String       @id @default(cuid())
+  organizationId         String
+  uploadedByMembershipId String
+  activityId             String?
+  importJobId            String?
+  exportJobId            String?
+  fileName               String
+  storageKey             String
+  mimeType               String
+  sizeBytes              Int
+  createdAt              DateTime     @default(now())
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy             Membership   @relation("AttachmentUploadedBy", fields: [uploadedByMembershipId], references: [id])
+  activity               Activity?    @relation(fields: [activityId], references: [id])
+  importJob              ImportJob?   @relation(fields: [importJobId], references: [id])
+  exportJob              ExportJob?   @relation(fields: [exportJobId], references: [id])
+
+  @@index([organizationId, createdAt])
+}
+
+model AuditLog {
+  id                String        @id @default(cuid())
+  organizationId    String?
+  actorUserId       String?
+  actorMembershipId String?
+  entityType        String
+  entityId          String
+  action            String
+  summary           String
+  metadata          Json?
+  createdAt         DateTime      @default(now())
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actorUser         User?         @relation("AuditActorUser", fields: [actorUserId], references: [id])
+  actorMembership   Membership?   @relation("AuditActorMembership", fields: [actorMembershipId], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+  @@index([action, createdAt])
+}
+
+model AssignmentHistory {
+  id                    String       @id @default(cuid())
+  organizationId        String
+  entityType            String
+  entityId              String
+  fromMembershipId      String?
+  toMembershipId        String?
+  changedByMembershipId String
+  reason                String?
+  createdAt             DateTime     @default(now())
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fromMembership        Membership?  @relation("AssignmentFrom", fields: [fromMembershipId], references: [id])
+  toMembership          Membership?  @relation("AssignmentTo", fields: [toMembershipId], references: [id])
+  changedBy             Membership   @relation("AssignmentChangedBy", fields: [changedByMembershipId], references: [id])
+
+  @@index([organizationId, entityType, entityId, createdAt])
+}
+
+model LeadStatusHistory {
+  id                    String       @id @default(cuid())
+  organizationId        String
+  leadId                String
+  fromStatus            LeadStatus?
+  toStatus              LeadStatus
+  changedByMembershipId String
+  reason                String?
+  createdAt             DateTime     @default(now())
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead                  Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  changedBy             Membership   @relation("LeadStatusChangedBy", fields: [changedByMembershipId], references: [id])
+
+  @@index([organizationId, leadId, createdAt])
+}
+
+model DealStageHistory {
+  id                    String         @id @default(cuid())
+  organizationId        String
+  dealId                String
+  fromStageId           String?
+  toStageId             String
+  changedByMembershipId String
+  note                  String?
+  createdAt             DateTime       @default(now())
+  organization          Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deal                  Deal           @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  fromStage             PipelineStage? @relation("DealStageFrom", fields: [fromStageId], references: [id])
+  toStage               PipelineStage  @relation("DealStageTo", fields: [toStageId], references: [id])
+  changedBy             Membership     @relation("DealStageChangedBy", fields: [changedByMembershipId], references: [id])
+
+  @@index([organizationId, dealId, createdAt])
+}
+
+model AsyncJob {
+  id             String         @id @default(cuid())
+  organizationId String?
+  type           AsyncJobType
+  status         AsyncJobStatus @default(QUEUED)
+  payload        Json
+  runAt          DateTime
+  startedAt      DateTime?
+  completedAt    DateTime?
+  attempts       Int            @default(0)
+  errorMessage   String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, type, status, runAt])
+}
