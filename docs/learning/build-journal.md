@@ -191,3 +191,37 @@ Reviewer focus:
 - `src/hooks/useLeads.ts`: verify mutations invalidate the right cache keys after server writes.
 - `src/lib/http/client.ts`: verify client parsing matches the server's `{ data }` / `{ error }` contract.
 What a junior reviewer might miss: React Query hooks are part of the request architecture, not just frontend convenience code.
+
+## Reconciling the journal with the code in this clone
+
+The journal above records intent. This section records what a reviewer finds when checking each slice against the committed code. Line numbers refer to this clone.
+
+### Stage 1 decision, revisited: shared schema without RLS
+
+The "seams so PostgreSQL RLS could be added later" exist in the form of a single choke point, `withTenantScope()` (`src/lib/db/tenantContext.ts:24-29`), and a request context that always carries `tenantId` (`src/types/context.ts:9-12`). There is no `SET app.current_org` call, no raw SQL, and no Prisma client extension yet, so RLS would be added by wrapping `prisma.$transaction` and issuing a `set_config` per request. The "real failure mode" the journal names (a forgotten tenant filter) has a sibling the journal does not name: a forgotten check on a *foreign key* supplied by the client (`src/services/activityService.ts:64-67`). RLS on the referenced table would not catch that either, because the insert happens in the caller's own tenant.
+
+### Stage 2 decision, revisited: User + Membership
+
+Implemented as described (`prisma/schema.prisma:200-249`). The payoff the journal predicts, "future org switching", is not reachable from the UI yet: `demoLogin` accepts an `organizationId` (`src/services/authService.ts:41-47`) but `DemoLoginCard` never sends one (`src/components/crm/demo-login-card.tsx:43`), and there is no switch endpoint. Invitations are created (`src/services/organizationService.ts:149-189`) but there is no route that accepts one, so a new person cannot actually join an org through the API.
+
+### Stage 3 decision, revisited: thin routes, services, repositories
+
+Holds up well: every route file is 32 lines or fewer, and all multi-row writes in `leadService`, `dealService`, `contactService`, `activityService`, `exportService`, `importService` and `savedViewService` run in one `$transaction`. Four places break the pattern: three route handlers read repositories directly without a service (`src/app/api/org/users/route.ts:19`, `src/app/api/pipelines/route.ts:19`, `src/app/api/org/invitations/route.ts:21`), and `organizationService.updateMembership` skips the transaction (`:191-236`).
+
+### Slice-by-slice reviewer notes
+
+- **Slice 1:** session reload works as claimed (`src/lib/auth/session.ts:75-92`). The demo login route issues sessions without a credential; record that explicitly as a "demo only" decision with a guard before shipping.
+- **Slice 2:** the "last admin" guard exists (`organizationService.ts:198-211`) but is check-then-act outside a transaction, and skips `status: INVITED`. Invitation side effects are queued durably as the journal says (`:166-175`), but the `INVITATION_NOTIFICATION` job type is a no-op in the runner (`src/services/jobService.ts:105-109`).
+- **Slice 3:** conversion does guard against re-conversion (`leadService.ts:221-223`) as the journal requires. It does not guard against the status route marking a lead `CONVERTED` with no contact (`:22`).
+- **Slice 4:** stage-to-status derivation is correct and now protected by `tests/deal-stage-update-result.test.mjs`. Export generation is a stub (`jobService.ts:33-44`); the journal's "verify job status transitions and error handling" would flag that `ImportJob` is never marked `FAILED`.
+- **Slice 5:** the UI stays thin as intended. Cache invalidation after lead creation hits `["leads"]` and `["dashboard"]` (`src/hooks/useLeads.ts:25-28`) but not `["activities"]` or `["pipelines"]`, which is correct because lead creation touches neither.
+
+### Quality gates
+
+The journal lists "build verification" under stage 6. Nothing in the repo records a build result (there is no CI config and no committed build log outside `astraupskill/evidence/`), so treat that line as a statement of intent and re-run `npm run build` yourself.
+
+## Exercises
+
+1. **Goal:** write the missing decision record. **Check:** add a "Stage 4 - Authentication strategy" entry in the same format as stages 1-3 that names at least three options (demo email login, password + session, external OIDC) and records why demo login was chosen and what must change before production.
+2. **Goal:** turn a reviewer note into a PR slice. **Check:** write a "Slice 6" block in the format above for "accept invitation", listing novel-logic files you would create and one thing a junior reviewer might miss (for example: the invitation must be matched by token *and* email, and `expiresAt` must be checked).
+3. **Goal:** test the journal's claim about transactions. **Check:** list every service method that writes to the database; mark each "in `$transaction`" or "not". The non-transactional writes you should find are `authService.demoLogin` (the `lastLoginAt` update, `src/services/authService.ts:55`), `organizationService.updateMembership` (update plus audit), and every write in `jobService.processDueJobs` (job status updates, export updates, and the per-row contact inserts). Decide which of these actually need a transaction.
